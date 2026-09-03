@@ -176,6 +176,7 @@ export class HorizonEditor {
   private activityDismissTimer: number | undefined;
   private materialSearch = '';
   private materialCategory = 'all';
+  private materialGalleryScrollTop = 0;
   private showShaderEditor = false;
   private shaderDraftSource = '';
   private shaderDraftName = 'My Custom Shader';
@@ -205,6 +206,7 @@ export class HorizonEditor {
   private lastAuxiliaryRenderAt = 0;
   private quadSplit = { x: 50, y: 50 };
   private maximizedQuadPane: 'camera' | 'top' | 'front' | 'right' | null = null;
+  private viewportResizeObserver: ResizeObserver | null = null;
   private screenRecorder: StudioScreenRecorder;
   private videoEditor: VideoEditor;
 
@@ -257,7 +259,7 @@ export class HorizonEditor {
     });
     const viewport = this.root.querySelector('#hz-viewport') as HTMLElement;
     viewport.addEventListener('pointerdown', (event) => {
-      const wrap = viewport.parentElement?.getBoundingClientRect();
+      const wrap = viewport.closest<HTMLElement>('.hz-viewport-wrap')?.getBoundingClientRect();
       if (!wrap) return;
       this.viewportPickAnchor = { x: event.clientX - wrap.left, y: event.clientY - wrap.top };
     }, true);
@@ -384,8 +386,8 @@ export class HorizonEditor {
     if (!wrap) return;
     const width = toolbar.offsetWidth || 190;
     const height = toolbar.offsetHeight || 36;
-    const left = Math.max(0, Math.min(wrap.width - width, anchor.x));
-    const top = Math.max(0, Math.min(wrap.height - height, anchor.y));
+    const left = Math.max(0, Math.min(wrap.width - width, anchor.x - width / 2));
+    const top = Math.max(0, Math.min(wrap.height - height, anchor.y - height / 2));
     toolbar.style.left = `${left}px`;
     toolbar.style.top = `${top}px`;
     toolbar.style.bottom = 'auto';
@@ -406,15 +408,13 @@ export class HorizonEditor {
       buildSetPropertyCommand(id, 'transform.rotation', transform.rotation, prevRot, txId, { kind: 'human', name: 'User' }, 'Gizmo transform', 'ui'),
       buildSetPropertyCommand(id, 'transform.scale', transform.scale, prevScale, txId, { kind: 'human', name: 'User' }, 'Gizmo transform', 'ui'),
     ];
-    if (this.autoKeyEnabled) {
-      commands.push(
-        ...this.buildAutoKeyCommands(id, [
-          ['transform.position', transform.position],
-          ['transform.rotation', transform.rotation],
-          ['transform.scale', transform.scale],
-        ], txId),
-      );
-    }
+    commands.push(
+      ...this.buildAutoKeyCommands(id, [
+        ['transform.position', transform.position],
+        ['transform.rotation', transform.rotation],
+        ['transform.scale', transform.scale],
+      ], txId, this.autoKeyEnabled),
+    );
     this.bus.executeTransaction(
       commands,
       { kind: 'human', name: 'User' },
@@ -481,14 +481,12 @@ export class HorizonEditor {
         'ui',
       ),
     ];
-    if (this.autoKeyEnabled) {
-      commands.push(
-        ...this.buildAutoKeyCommands(cameraId, [
-          ['transform.position', state.position],
-          ['camera.lookAt', state.lookAt],
-        ], txId),
-      );
-    }
+    commands.push(
+      ...this.buildAutoKeyCommands(cameraId, [
+        ['transform.position', state.position],
+        ['camera.lookAt', state.lookAt],
+      ], txId, this.autoKeyEnabled),
+    );
     this.bus.executeTransaction(
       commands,
       { kind: 'human', name: 'User' },
@@ -501,6 +499,7 @@ export class HorizonEditor {
     ownerId: string,
     properties: Array<[path: string, value: unknown]>,
     txId: string,
+    createMissingTracks = true,
   ): ReturnType<typeof makeCommand>[] {
     const composition = getActiveComposition(this.bus.project);
     const sequenceId = composition.sequence;
@@ -526,6 +525,7 @@ export class HorizonEditor {
         interpolation,
       };
       if (!existing) {
+        if (!createMissingTracks) return [];
         const owner = this.bus.project.nodes[ownerId] ?? this.bus.project.materials[ownerId];
         const track: Track = {
           id: createId('track'),
@@ -884,6 +884,11 @@ export class HorizonEditor {
   }
 
   private bindViewportLayout(): void {
+    const cameraCell = this.root.querySelector<HTMLElement>('.hz-camera-cell');
+    this.viewportResizeObserver?.disconnect();
+    this.viewportResizeObserver = new ResizeObserver(() => this.applyResponsivePreview());
+    if (cameraCell) this.viewportResizeObserver.observe(cameraCell);
+
     this.root.querySelector('#hz-view-layout-toggle')?.addEventListener('click', () => {
       this.viewportLayout = this.viewportLayout === 'camera' ? 'quad' : 'camera';
       const grid = this.root.querySelector<HTMLElement>('#hz-view-grid');
@@ -1733,7 +1738,7 @@ export class HorizonEditor {
       button.setAttribute('aria-label', button.title);
       button.setAttribute('aria-pressed', String(this.focusMode));
     }
-    if (this.sceneReady) requestAnimationFrame(() => this.scene.resize());
+    requestAnimationFrame(() => this.applyResponsivePreview());
     this.renderSelectionChip();
     this.syncFocusInspector();
   }
@@ -2974,6 +2979,10 @@ export class HorizonEditor {
   renderInspector() {
     const el = document.getElementById('hz-inspector');
     if (!el) return;
+    const inspectorScroller = el.parentElement;
+    const previousScrollTop = this.inspectorTab === 'material'
+      ? inspectorScroller?.scrollTop ?? 0
+      : null;
     const id = this.selection[0];
     if (!id) {
       this.inspectorTab = this.inspectorTab === 'history' ? 'history' : 'properties';
@@ -3391,6 +3400,16 @@ export class HorizonEditor {
     }
 
     el.innerHTML = `${this.inspectorTabsHtml(tabs)}${body}`;
+    if (previousScrollTop !== null && inspectorScroller) {
+      inspectorScroller.scrollTop = previousScrollTop;
+    }
+    const materialGalleryElement = el.querySelector<HTMLElement>('.hz-material-gallery');
+    if (materialGalleryElement) {
+      materialGalleryElement.scrollTop = this.materialGalleryScrollTop;
+      materialGalleryElement.addEventListener('scroll', () => {
+        this.materialGalleryScrollTop = materialGalleryElement.scrollTop;
+      }, { passive: true });
+    }
     this.bindInspectorTabs(el, tabs.map((tab) => tab.id));
     this.bindExpanders(el);
 
@@ -3680,16 +3699,19 @@ export class HorizonEditor {
 
     el.querySelectorAll<HTMLElement>('[data-material-card]').forEach((card) => {
       card.addEventListener('click', () => {
+        this.materialGalleryScrollTop = materialGalleryElement?.scrollTop ?? this.materialGalleryScrollTop;
         this.assignMaterial(id, node.name, card.dataset.materialCard, materialId);
       });
     });
 
     el.querySelector('#hz-material-search')?.addEventListener('input', (event) => {
       this.materialSearch = (event.target as HTMLInputElement).value;
+      this.materialGalleryScrollTop = 0;
       this.renderInspector();
     });
     el.querySelector('#hz-material-category')?.addEventListener('change', (event) => {
       this.materialCategory = (event.target as HTMLSelectElement).value;
+      this.materialGalleryScrollTop = 0;
       this.renderInspector();
     });
     el.querySelector('#hz-material-new')?.addEventListener('click', () => {

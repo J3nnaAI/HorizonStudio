@@ -140,6 +140,11 @@ export class SceneAdapter {
   private driveCameraFromProject = false;
   private runtimeCameraLookOffset = { yaw: 0, pitch: 0 };
   private transformDragNodeId: string | null = null;
+  private transformTargetObject: THREE.Object3D | null = null;
+  private transformPivotObject = new THREE.Object3D();
+  private transformPivotBaseWorld = new THREE.Matrix4();
+  private transformTargetBaseWorld = new THREE.Matrix4();
+  private pickedTransformPivot: THREE.Vector3 | null = null;
   private transformMode: TransformMode = 'translate';
   private graphiteMaterials = new Map<string, THREE.ShaderMaterial>();
   private floorMaterials = new Map<string, THREE.ShaderMaterial>();
@@ -575,17 +580,41 @@ export class SceneAdapter {
     this.transformControls.addEventListener('dragging-changed', (e) => {
       this.controls.enabled = !e.value;
       const obj = this.transformControls?.object;
+      const target = obj === this.transformPivotObject ? this.transformTargetObject : obj;
       if (e.value) {
-        this.transformDragNodeId = obj?.userData.nodeId ?? null;
-      } else if (obj?.userData.nodeId) {
-        onTransformEnd(obj.userData.nodeId, {
-          position: [obj.position.x, obj.position.y, obj.position.z],
-          rotation: [obj.rotation.x, obj.rotation.y, obj.rotation.z],
-          scale: [obj.scale.x, obj.scale.y, obj.scale.z],
+        this.transformDragNodeId = target?.userData.nodeId ?? null;
+        if (obj === this.transformPivotObject && target) {
+          obj.updateMatrixWorld(true);
+          target.updateMatrixWorld(true);
+          this.transformPivotBaseWorld.copy(obj.matrixWorld);
+          this.transformTargetBaseWorld.copy(target.matrixWorld);
+        }
+      } else if (target?.userData.nodeId) {
+        onTransformEnd(target.userData.nodeId, {
+          position: [target.position.x, target.position.y, target.position.z],
+          rotation: [target.rotation.x, target.rotation.y, target.rotation.z],
+          scale: [target.scale.x, target.scale.y, target.scale.z],
         });
         this.transformDragNodeId = null;
       }
     });
+    this.transformControls.addEventListener('objectChange', () => {
+      const controlsObject = this.transformControls?.object;
+      const target = this.transformTargetObject;
+      if (controlsObject !== this.transformPivotObject || !target) return;
+      controlsObject.updateMatrixWorld(true);
+      const delta = new THREE.Matrix4().multiplyMatrices(
+        controlsObject.matrixWorld,
+        this.transformPivotBaseWorld.clone().invert(),
+      );
+      const nextWorld = new THREE.Matrix4().multiplyMatrices(delta, this.transformTargetBaseWorld);
+      const nextLocal = target.parent
+        ? new THREE.Matrix4().multiplyMatrices(target.parent.matrixWorld.clone().invert(), nextWorld)
+        : nextWorld;
+      nextLocal.decompose(target.position, target.quaternion, target.scale);
+      target.updateMatrixWorld(true);
+    });
+    this.scene.add(this.transformPivotObject);
     this.scene.add(this.transformControls.getHelper());
   }
 
@@ -602,15 +631,35 @@ export class SceneAdapter {
     if (!this.transformControls) return;
     if (!id) {
       this.transformControls.detach();
+      this.transformTargetObject = null;
+      this.pickedTransformPivot = null;
       return;
     }
     const node = this.currentProject ? this.findProjectNode(this.currentProject, id) : undefined;
     if (node?.locked) {
       this.transformControls.detach();
+      this.transformTargetObject = null;
+      this.pickedTransformPivot = null;
       return;
     }
     const obj = this.nodeObjects.get(id);
-    if (obj) this.transformControls.attach(obj);
+    if (!obj) return;
+    obj.updateMatrixWorld(true);
+    const pivot = this.pickedTransformPivot?.clone();
+    if (!pivot) {
+      const bounds = new THREE.Box3().setFromObject(obj);
+      if (!bounds.isEmpty()) bounds.getCenter(this.transformPivotObject.position);
+      else obj.getWorldPosition(this.transformPivotObject.position);
+    } else {
+      this.transformPivotObject.position.copy(pivot);
+    }
+    this.transformPivotObject.quaternion.identity();
+    this.transformPivotObject.scale.set(1, 1, 1);
+    this.transformPivotObject.userData.nodeId = id;
+    this.transformPivotObject.updateMatrixWorld(true);
+    this.transformTargetObject = obj;
+    this.pickedTransformPivot = null;
+    this.transformControls.attach(this.transformPivotObject);
   }
 
   private findProjectNode(project: HorizonProject, id: string): HorizonNode | undefined {
@@ -628,10 +677,12 @@ export class SceneAdapter {
       let obj: THREE.Object3D | null = hits[0].object;
       while (obj && !obj.userData.nodeId) obj = obj.parent;
       if (obj?.userData.nodeId) {
+        this.pickedTransformPivot = hits[0].point.clone();
         this.onSelect(obj.userData.nodeId);
         return;
       }
     }
+    this.pickedTransformPivot = null;
     this.onSelect(null);
   }
 
