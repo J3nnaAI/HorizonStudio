@@ -196,10 +196,9 @@ export function registerHorizonWebMcpTools(ctx: WebMcpContext): {
     {
       name: 'placeImage',
       title: 'Place Image',
-      description: 'Imports an image from inline data or an allowed URL, embeds it in the project, and places it on the stage or in the environment as one revision-checked transaction.',
+      description: 'Accepts an inline data image, embeds it in the project, and places it on the stage or in the environment as one revision-checked transaction. Send the image itself as a data:image/... URL; do not send a remote URL.',
       inputSchema: jsonSchema({
-        dataUrl: { type: 'string', description: 'Inline image data URL. Provide this or url, not both.' },
-        url: { type: 'string', description: 'Same-origin or policy-approved remote image URL. The server must permit browser CORS access.' },
+        dataUrl: { type: 'string', pattern: '^data:image/', description: 'The complete inline data:image/... URL for the image.' },
         name: { type: 'string' },
         target: { type: 'string', enum: ['stage', 'environment'], default: 'stage' },
         compositionId: { type: 'string' },
@@ -211,7 +210,7 @@ export function registerHorizonWebMcpTools(ctx: WebMcpContext): {
         opacity: { type: 'number', minimum: 0, maximum: 1 },
         expectedRevision: { type: 'integer', minimum: 0 },
         intent: { type: 'string' },
-      }, ['expectedRevision']),
+      }, ['dataUrl', 'expectedRevision']),
       execute: (input) => run(() => projectTools.executePublicProjectTool(ctx, 'placeImage', input)),
     },
     {

@@ -28,7 +28,6 @@ type RevisionInput = { expectedRevision?: number };
 
 type PlaceImageInput = RevisionInput & {
   dataUrl?: string;
-  url?: string;
   name?: string;
   target?: 'stage' | 'environment';
   compositionId?: string;
@@ -116,20 +115,13 @@ export async function placeImage(ctx: WebMcpContext, input: PlaceImageInput): Pr
   const revisionFailure = stale(ctx, input);
   if (revisionFailure) return revisionFailure;
   if (!policy(ctx).import) return fail(ctx, 'PERMISSION_DENIED', 'Image import is disabled');
-  if (Boolean(input.dataUrl) === Boolean(input.url)) {
-    return fail(ctx, 'INVALID_INPUT', 'Provide exactly one image source: dataUrl or url');
+  if (!input.dataUrl?.startsWith('data:image/')) {
+    return fail(ctx, 'INVALID_INPUT', 'Provide the image itself as a data:image/... URL');
   }
 
   try {
-    const sourceUrl = input.url ? new URL(input.url, document.baseURI) : null;
-    if (sourceUrl && !['http:', 'https:'].includes(sourceUrl.protocol)) {
-      return fail(ctx, 'INVALID_INPUT', 'Image URL must use HTTP or HTTPS');
-    }
-    if (sourceUrl && sourceUrl.origin !== location.origin && !policy(ctx).remoteImport) {
-      return fail(ctx, 'PERMISSION_DENIED', 'Remote image import is disabled');
-    }
-    const response = await fetch(sourceUrl?.href ?? input.dataUrl!);
-    if (!response.ok) throw new Error(`Image download failed (${response.status} ${response.statusText})`);
+    const response = await fetch(input.dataUrl);
+    if (!response.ok) throw new Error('The supplied image data could not be read');
     const blob = await response.blob();
     if (blob.size > MAX_IMAGE_BYTES) throw new Error('The image is larger than 50 MB');
     const mimeType = blob.type.split(';', 1)[0];
@@ -153,7 +145,7 @@ export async function placeImage(ctx: WebMcpContext, input: PlaceImageInput): Pr
       width: dimensions.width,
       height: dimensions.height,
       source: 'webmcp-image-import',
-      metadata: sourceUrl ? { sourceUrl: sourceUrl.href } : {},
+      metadata: {},
     };
 
     const operations: Array<Record<string, unknown> & { op: string }> = [];

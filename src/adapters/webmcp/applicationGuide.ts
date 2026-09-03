@@ -66,7 +66,7 @@ export function buildApplicationGuide(ctx: WebMcpContext): Record<string, unknow
     capabilities: [
       'Inspect and edit project, composition, scene, node, material, shader, field, timeline, interaction, presentation, responsive, runtime-contract, and render state.',
       'Create, list, open, import, save, export, publish, and preview projects through explicit project tools backed entirely by browser storage and downloads.',
-      'Import image assets from inline data or an allowed URL. URL assets are downloaded and embedded so projects remain portable when exported or published.',
+      'Place image assets from inline data supplied directly by the WebMCP client. The image is embedded so the project remains portable when exported or published.',
       'Create supported entities through factory components such as factory/node, factory/material, factory/sequence, and factory/render-job.',
       'Invoke higher-level authoring operations through action components such as action/object-transform and action/preview-render.',
       'Select scene components and inspect every editable value with its type, range, help, and validation rules.',
@@ -122,7 +122,7 @@ export function buildApplicationGuide(ctx: WebMcpContext): Record<string, unknow
       physicalSky:
         'Patch the active composition environment so background.mode is sky and sky.enabled is true. Sky controls include turbidity, rayleigh, mieCoefficient, mieDirectionalG, sunElevation, sunAzimuth, sunIntensity, and groundColor.',
       imageSky:
-        'In one editProject call, createAsset with ref skyImage and an image dataUrl or URL, then patch the active composition environment with background.mode image and background.imageAssetId @skyImage. Preserve the other environment sections in the patch.',
+        'Call placeImage with target environment and the complete data:image/... URL. Horizon embeds the image and updates the active composition as one undoable transaction.',
     },
     tools: {
       about: {
@@ -163,8 +163,7 @@ export function buildApplicationGuide(ctx: WebMcpContext): Record<string, unknow
         purpose: 'Import a picture and immediately place it on the stage or use it as the environment.',
         readOnly: false,
         input: {
-          dataUrl: 'inline image data URL; provide this or url',
-          url: 'allowed image URL; provide this or dataUrl',
+          dataUrl: 'required complete data:image/... URL containing the image itself',
           target: 'stage (default) or environment',
           position: 'optional [x,y,z] for stage placement',
           rotation: 'optional [x,y,z] radians for stage placement',
