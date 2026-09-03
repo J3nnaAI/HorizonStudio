@@ -1,0 +1,33 @@
+{
+  "name": "horizon-studio",
+  "version": "0.9.1",
+  "private": true,
+  "author": "J3nna Technologies, LLC",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "license:check": "node tools/license-headers.mjs",
+    "license:fix": "node tools/license-headers.mjs --fix",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "three": "^0.170.0",
+    "uuid": "^11.0.3",
+    "webm-muxer": "^5.1.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/three": "^0.170.0",
+    "@types/uuid": "^10.0.0",
+    "fake-indexeddb": "^6.2.5",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^2.1.8"
+  }
+}

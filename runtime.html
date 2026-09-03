@@ -1,0 +1,40 @@
+<!--
+  Copyright 2026 J3nna Technologies, LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Horizon Runtime Demo</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; }
+      html { background: #050505; }
+      body { background: #050505; color: #e8e8e8; font-family: system-ui, sans-serif; }
+      #hero { width: 100vw; height: 70vh; }
+      .controls { padding: 1.5rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+      input, button { padding: 0.5rem 1rem; background: #1a1a1a; border: 1px solid #333; color: #fff; border-radius: 4px; }
+      button { cursor: pointer; }
+      button:hover { background: #2a2a2a; }
+      body.is-preview { min-height: 100vh; overflow-x: hidden; }
+      body.is-preview #hero { position: sticky; inset: 0 0 auto; width: 100vw; height: 100vh; }
+      body.is-preview .controls { display: none; }
+      body.is-preview.is-scroll-preview { height: 500vh; }
+      .preview-hint { position: fixed; z-index: 50; left: 18px; bottom: 18px; padding: 9px 12px; border: 1px solid #ffffff2c; border-radius: 999px; background: #080808b8; color: #eee; font: 650 10px/1 ui-monospace,monospace; letter-spacing: .11em; backdrop-filter: blur(12px); transition: opacity .5s; }
+      .preview-hint.fade { opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="hero"></div>
+    <div class="controls">
+      <label>Text <input id="text-input" value="INTELLIGENCE" /></label>
+      <label>Energy <input id="energy-input" type="range" min="0" max="1" step="0.01" value="0.72" /></label>
+      <button id="apply-btn">Apply</button>
+      <button id="play-btn">Play intro</button>
+    </div>
+    <div id="preview-hint" class="preview-hint" hidden></div>
+    <script type="module" src="/src/runtime-demo.ts"></script>
+  </body>
+</html>

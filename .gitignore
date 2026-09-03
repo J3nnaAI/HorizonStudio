@@ -1,0 +1,17 @@
+# Build output
+dist
+node_modules
+
+# Playwright
+test-results/
+playwright-report/
+
+# Local
+.DS_Store
+*.local
+.cursor/
+
+# Internal product and release planning
+/HorizonStudio-PRD-ADRs-COMBINED.md
+/acceptance/
+/docs/

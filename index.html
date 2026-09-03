@@ -1,0 +1,24 @@
+<!--
+  Copyright 2026 J3nna Technologies, LLC
+  SPDX-License-Identifier: Apache-2.0
+-->
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="permissions-policy" content="tools=*" />
+    <title>Horizon Studio</title>
+    <link rel="stylesheet" href="/src/styles/studio.css" />
+  </head>
+  <body>
+    <div id="horizon-boot" class="hz-boot" role="status" aria-live="polite">
+      <div class="hz-boot-mark">⌁</div>
+      <div><strong>Horizon Studio</strong><span id="horizon-boot-status">Opening workspace</span></div>
+      <i></i>
+    </div>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

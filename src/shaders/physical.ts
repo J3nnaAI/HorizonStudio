@@ -1,0 +1,123 @@
+/*
+ * Copyright 2026 J3nna Technologies, LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { createId } from '../core/ids';
+import type { MaterialDef, ShaderDef } from '../core/types';
+
+export const PHYSICAL_SHADER_ID = 'shd_physical';
+
+export function createPhysicalShader(): ShaderDef {
+  return {
+    id: PHYSICAL_SHADER_ID,
+    name: 'Physical Surface',
+    domain: 'surface',
+    backends: ['webgpu', 'webgl'],
+    textureSlots: [
+      { slot: 'baseColorMap', role: 'baseColor', colorSpace: 'sRGB', uvChannel: 0 },
+      { slot: 'metallicMap', role: 'metallic', colorSpace: 'data', channel: 'b', uvChannel: 0 },
+      { slot: 'roughnessMap', role: 'roughness', colorSpace: 'data', channel: 'g', uvChannel: 0 },
+      { slot: 'normalMap', role: 'normal', colorSpace: 'data', uvChannel: 0 },
+      { slot: 'bumpMap', role: 'bump', colorSpace: 'data', channel: 'r', uvChannel: 0 },
+      { slot: 'aoMap', role: 'ambientOcclusion', colorSpace: 'data', channel: 'r', uvChannel: 1 },
+      { slot: 'emissiveMap', role: 'emissive', colorSpace: 'sRGB', uvChannel: 0 },
+      { slot: 'clearcoatMap', role: 'clearcoat', colorSpace: 'data', channel: 'r', uvChannel: 0 },
+      { slot: 'clearcoatRoughnessMap', role: 'clearcoatRoughness', colorSpace: 'data', channel: 'g', uvChannel: 0 },
+      { slot: 'clearcoatNormalMap', role: 'clearcoatNormal', colorSpace: 'data', uvChannel: 0 },
+      { slot: 'transmissionMap', role: 'transmission', colorSpace: 'data', channel: 'r', uvChannel: 0 },
+      { slot: 'thicknessMap', role: 'thickness', colorSpace: 'data', channel: 'g', uvChannel: 0 },
+      { slot: 'sheenColorMap', role: 'sheen', colorSpace: 'sRGB', uvChannel: 0 },
+      { slot: 'anisotropyMap', role: 'anisotropy', colorSpace: 'data', uvChannel: 0 },
+      { slot: 'displacementMap', role: 'displacement', colorSpace: 'data', channel: 'r', uvChannel: 0 },
+      { slot: 'alphaMap', role: 'opacity', colorSpace: 'data', channel: 'a', uvChannel: 0 },
+      { slot: 'envMap', role: 'environment', colorSpace: 'linear', uvChannel: 0 },
+    ],
+    parameters: [
+      { path: 'baseColor', type: 'color', default: '#808080', value: '#808080' },
+      { path: 'metalness', type: 'number', default: 0, value: 0, min: 0, max: 1 },
+      { path: 'roughness', type: 'number', default: 0.5, value: 0.5, min: 0, max: 1 },
+      { path: 'diffusion', type: 'number', default: 0, value: 0, min: 0, max: 1 },
+      { path: 'microTexture', type: 'number', default: 0, value: 0, min: 0, max: 1 },
+      { path: 'bumpScale', type: 'number', default: 0, value: 0, min: 0, max: 0.2 },
+      { path: 'specularIntensity', type: 'number', label: 'Surface reflectance', description: 'Strength of dielectric reflection; metals derive reflectance from base color.', default: 1, value: 1, min: 0, max: 2, animatable: true },
+      { path: 'specularColor', type: 'color', default: '#ffffff', value: '#ffffff' },
+      { path: 'emissiveColor', type: 'color', default: '#000000', value: '#000000' },
+      { path: 'emissiveIntensity', type: 'number', default: 0, value: 0, min: 0, max: 10, animatable: true },
+      { path: 'clearcoat', type: 'number', default: 0, value: 0, min: 0, max: 1 },
+      { path: 'clearcoatRoughness', type: 'number', default: 0, value: 0, min: 0, max: 1 },
+      { path: 'sheen', type: 'number', default: 0, value: 0, min: 0, max: 1 },
+      { path: 'sheenColor', type: 'color', default: '#ffffff', value: '#ffffff' },
+      { path: 'sheenRoughness', type: 'number', default: 1, value: 1, min: 0, max: 1 },
+      { path: 'anisotropy', type: 'number', default: 0, value: 0, min: 0, max: 1 },
+      { path: 'anisotropyRotation', type: 'number', default: 0, value: 0, min: -3.1416, max: 3.1416 },
+      { path: 'iridescence', type: 'number', default: 0, value: 0, min: 0, max: 1 },
+      { path: 'iridescenceIOR', type: 'number', default: 1.3, value: 1.3, min: 1, max: 2.5 },
+      { path: 'transmission', type: 'number', label: 'Refraction / transmission', default: 0, value: 0, min: 0, max: 1, animatable: true },
+      { path: 'thickness', type: 'number', label: 'Refraction thickness', default: 0, value: 0, min: 0, max: 10, animatable: true },
+      { path: 'ior', type: 'number', label: 'Index of refraction', description: 'Controls refraction bending and physically-derived surface reflectance.', default: 1.5, value: 1.5, min: 1, max: 2.5, animatable: true },
+      { path: 'dispersion', type: 'number', label: 'Chromatic dispersion', default: 0, value: 0, min: 0, max: 1, animatable: true },
+      { path: 'causticsEnabled', type: 'boolean', label: 'Projected caustics', default: false, value: false },
+      { path: 'causticsStrength', type: 'number', label: 'Caustic strength', default: 0.85, value: 0.85, min: 0, max: 4, animatable: true },
+      { path: 'causticsScale', type: 'number', label: 'Caustic spread', default: 1.6, value: 1.6, min: 0.1, max: 12, animatable: true },
+      { path: 'causticsFocus', type: 'number', label: 'Caustic focus', default: 0.68, value: 0.68, min: 0, max: 1, animatable: true },
+      { path: 'causticsChromatic', type: 'number', label: 'Caustic dispersion', default: 0.18, value: 0.18, min: 0, max: 1, animatable: true },
+      { path: 'causticsReceiverY', type: 'number', label: 'Receiver plane Y', default: 0.02, value: 0.02, min: -100, max: 100, animatable: true },
+      { path: 'attenuationColor', type: 'color', default: '#ffffff', value: '#ffffff' },
+      { path: 'attenuationDistance', type: 'number', default: 0, value: 0, min: 0, max: 100 },
+      { path: 'envMapIntensity', type: 'number', default: 1, value: 1, min: 0, max: 5 },
+      { path: 'opacity', type: 'number', default: 1, value: 1, min: 0, max: 1 },
+      { path: 'doubleSided', type: 'boolean', default: false, value: false },
+      { path: 'bloom', type: 'boolean', default: false, value: false },
+    ],
+  };
+}
+
+export function createPhysicalMaterial(
+  name: string,
+  parameters: Partial<MaterialDef['parameters']> = {},
+): MaterialDef {
+  return {
+    id: createId('material'),
+    name,
+    shaderId: PHYSICAL_SHADER_ID,
+    parameters: {
+      baseColor: '#808080',
+      metalness: 0,
+      roughness: 0.5,
+      diffusion: 0,
+      microTexture: 0,
+      bumpScale: 0,
+      specularIntensity: 1,
+      specularColor: '#ffffff',
+      emissiveColor: '#000000',
+      emissiveIntensity: 0,
+      clearcoat: 0,
+      clearcoatRoughness: 0,
+      sheen: 0,
+      sheenColor: '#ffffff',
+      sheenRoughness: 1,
+      anisotropy: 0,
+      anisotropyRotation: 0,
+      iridescence: 0,
+      iridescenceIOR: 1.3,
+      transmission: 0,
+      thickness: 0,
+      ior: 1.5,
+      dispersion: 0,
+      causticsEnabled: false,
+      causticsStrength: 0.85,
+      causticsScale: 1.6,
+      causticsFocus: 0.68,
+      causticsChromatic: 0.18,
+      causticsReceiverY: 0.02,
+      attenuationColor: '#ffffff',
+      attenuationDistance: 0,
+      envMapIntensity: 1,
+      opacity: 1,
+      doubleSided: false,
+      bloom: false,
+      ...parameters,
+    },
+  };
+}
