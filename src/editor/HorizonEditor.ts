@@ -6233,6 +6233,27 @@ export class HorizonEditor {
     return this.trackCurveProjection(track).values;
   }
 
+  private setTimelinePlayhead(time: number, duration: number) {
+    const safeDuration = Math.max(duration, 0.001);
+    const clampedTime = Math.max(0, Math.min(duration, time));
+    const progress = clampedTime / safeDuration;
+    if (this.evaluator.getDriver() === 'external') this.evaluator.setExternal({ progress });
+    else {
+      this.evaluator.setManualProgress(progress);
+      this.evaluator.setDriver('manual');
+    }
+    const scrub = this.root.querySelector<HTMLInputElement>('#hz-scrub');
+    const timeLabel = this.root.querySelector<HTMLElement>('#hz-time');
+    if (scrub) scrub.value = String(Math.round(progress * 1000));
+    if (timeLabel) timeLabel.textContent = `${clampedTime.toFixed(2)}s`;
+    const snapshot = this.evaluator.sample(performance.now());
+    this.scene?.syncProject(this.bus.project, snapshot, { driveCamera: true });
+    for (const curve of this.root.querySelectorAll<HTMLCanvasElement>('.hz-track-curve')) {
+      const liveTrack = this.bus.project.tracks[curve.dataset.trackId ?? ''];
+      if (liveTrack) this.drawTrackCurve(curve, liveTrack, duration, clampedTime);
+    }
+  }
+
   private bindTrackCurve(canvas: HTMLCanvasElement, track: Track, duration: number) {
     if (canvas.dataset.bound === '1') return;
     canvas.dataset.bound = '1';
@@ -6257,7 +6278,6 @@ export class HorizonEditor {
 
     let draggingIndex = -1;
     canvas.addEventListener('mousedown', (event) => {
-      if (track.locked) return;
       const rect = canvas.getBoundingClientRect();
       const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
       const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
@@ -6274,20 +6294,33 @@ export class HorizonEditor {
         const ky = canvas.height - 8 - ((value - minVal) / span) * (canvas.height - 16);
         return Math.hypot(kx - x, ky - y) <= hitRadius;
       });
-      if (draggingIndex < 0) return;
       event.preventDefault();
+
+      if (draggingIndex < 0) {
+        const seekFromPointer = (pointerEvent: MouseEvent) => {
+          const liveRect = canvas.getBoundingClientRect();
+          const pointerX = ((pointerEvent.clientX - liveRect.left) / liveRect.width) * canvas.width;
+          const pointerTime = ((pointerX - 8) / (canvas.width - 16)) * duration;
+          this.setTimelinePlayhead(pointerTime, duration);
+        };
+        seekFromPointer(event);
+        const onScrubMove = (moveEvent: MouseEvent) => seekFromPointer(moveEvent);
+        const onScrubEnd = () => {
+          window.removeEventListener('mousemove', onScrubMove);
+          window.removeEventListener('mouseup', onScrubEnd);
+        };
+        window.addEventListener('mousemove', onScrubMove);
+        window.addEventListener('mouseup', onScrubEnd);
+        return;
+      }
 
       const startClientX = event.clientX;
       const startClientY = event.clientY;
       let dragged = false;
       const previewKeyframes = track.keyframes.map((keyframe) => structuredClone(keyframe));
       const selectedTime = previewKeyframes[draggingIndex].time;
-      this.evaluator.seek(selectedTime);
-      const scrub = this.root.querySelector<HTMLInputElement>('#hz-scrub');
-      const time = this.root.querySelector<HTMLElement>('#hz-time');
-      if (scrub) scrub.value = String(Math.round((selectedTime / Math.max(duration, 0.001)) * 1000));
-      if (time) time.textContent = `${selectedTime.toFixed(2)}s`;
-      this.drawTrackCurve(canvas, track, duration, selectedTime);
+      this.setTimelinePlayhead(selectedTime, duration);
+      if (track.locked) return;
 
       const onMove = (moveEvent: MouseEvent) => {
         if (draggingIndex < 0) return;
@@ -6315,9 +6348,7 @@ export class HorizonEditor {
           time: newTime,
           value: nextValue,
         };
-        this.evaluator.seek(newTime);
-        if (scrub) scrub.value = String(Math.round((newTime / Math.max(duration, 0.001)) * 1000));
-        if (time) time.textContent = `${newTime.toFixed(2)}s`;
+        this.setTimelinePlayhead(newTime, duration);
         this.drawTrackCurve(
           canvas,
           { ...track, keyframes: previewKeyframes },
