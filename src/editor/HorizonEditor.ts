@@ -6140,9 +6140,8 @@ export class HorizonEditor {
     ctx.fillStyle = '#101010';
     ctx.fillRect(0, 0, width, height);
 
-    const values = track.keyframes
-      .map((kf) => (typeof kf.value === 'number' ? kf.value : 0))
-      .filter((v) => Number.isFinite(v));
+    const curveValues = this.trackCurveValues(track);
+    const values = curveValues.filter((value) => Number.isFinite(value));
     const minVal = values.length ? Math.min(...values) : 0;
     const maxVal = values.length ? Math.max(...values) : 1;
     const span = Math.max(maxVal - minVal, 0.001);
@@ -6162,7 +6161,8 @@ export class HorizonEditor {
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       sorted.forEach((kf, index) => {
-        const value = typeof kf.value === 'number' ? kf.value : minVal;
+        const originalIndex = track.keyframes.indexOf(kf);
+        const value = curveValues[originalIndex] ?? minVal;
         const x = xAt(kf.time);
         const y = yAt(value);
         if (index === 0) ctx.moveTo(x, y);
@@ -6172,7 +6172,8 @@ export class HorizonEditor {
     }
 
     for (const kf of sorted) {
-      const value = typeof kf.value === 'number' ? kf.value : minVal;
+      const originalIndex = track.keyframes.indexOf(kf);
+      const value = curveValues[originalIndex] ?? minVal;
       const x = xAt(kf.time);
       const y = yAt(value);
       ctx.fillStyle = '#ff6a1a';
@@ -6188,6 +6189,38 @@ export class HorizonEditor {
     ctx.moveTo(playheadX, 4);
     ctx.lineTo(playheadX, height - 4);
     ctx.stroke();
+  }
+
+  /** Plot the numeric or vector component that carries the most visible motion. */
+  private trackCurveValues(track: Track): number[] {
+    const vectorLength = track.keyframes.reduce(
+      (length, keyframe) => Math.max(length, Array.isArray(keyframe.value) ? keyframe.value.length : 0),
+      0,
+    );
+    if (vectorLength === 0) {
+      return track.keyframes.map((keyframe) =>
+        typeof keyframe.value === 'number' && Number.isFinite(keyframe.value) ? keyframe.value : 0,
+      );
+    }
+    let bestComponent = 0;
+    let bestRange = -1;
+    for (let component = 0; component < vectorLength; component += 1) {
+      const values = track.keyframes.map((keyframe) => {
+        if (!Array.isArray(keyframe.value)) return 0;
+        const value = Number(keyframe.value[component] ?? 0);
+        return Number.isFinite(value) ? value : 0;
+      });
+      const range = Math.max(...values) - Math.min(...values);
+      if (range > bestRange) {
+        bestRange = range;
+        bestComponent = component;
+      }
+    }
+    return track.keyframes.map((keyframe) => {
+      if (!Array.isArray(keyframe.value)) return 0;
+      const value = Number(keyframe.value[bestComponent] ?? 0);
+      return Number.isFinite(value) ? value : 0;
+    });
   }
 
   private bindTrackCurve(canvas: HTMLCanvasElement, track: Track, duration: number) {
@@ -6219,49 +6252,68 @@ export class HorizonEditor {
       const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
       const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
       const hitRadius = 8;
+      const curveValues = this.trackCurveValues(track);
+      const minVal = curveValues.length ? Math.min(...curveValues) : 0;
+      const maxVal = curveValues.length ? Math.max(...curveValues) : 1;
+      const span = Math.max(maxVal - minVal, 0.001);
       draggingIndex = track.keyframes.findIndex((kf) => {
         const kx = (kf.time / Math.max(duration, 0.001)) * (canvas.width - 16) + 8;
-        const values = track.keyframes
-          .map((k) => (typeof k.value === 'number' ? k.value : 0))
-          .filter((v) => Number.isFinite(v));
-        const minVal = values.length ? Math.min(...values) : 0;
-        const maxVal = values.length ? Math.max(...values) : 1;
-        const span = Math.max(maxVal - minVal, 0.001);
-        const value = typeof kf.value === 'number' ? kf.value : minVal;
+        const keyframeIndex = track.keyframes.indexOf(kf);
+        const value = curveValues[keyframeIndex] ?? minVal;
         const ky = canvas.height - 8 - ((value - minVal) / span) * (canvas.height - 16);
         return Math.hypot(kx - x, ky - y) <= hitRadius;
       });
       if (draggingIndex < 0) return;
       event.preventDefault();
 
+      const startClientX = event.clientX;
+      const startClientY = event.clientY;
+      let dragged = false;
+      const previewKeyframes = track.keyframes.map((keyframe) => structuredClone(keyframe));
+      const selectedTime = previewKeyframes[draggingIndex].time;
+      this.evaluator.seek(selectedTime);
+      const scrub = this.root.querySelector<HTMLInputElement>('#hz-scrub');
+      const time = this.root.querySelector<HTMLElement>('#hz-time');
+      if (scrub) scrub.value = String(Math.round((selectedTime / Math.max(duration, 0.001)) * 1000));
+      if (time) time.textContent = `${selectedTime.toFixed(2)}s`;
+      this.drawTrackCurve(canvas, track, duration, selectedTime);
+
       const onMove = (moveEvent: MouseEvent) => {
-        const liveTrack = this.bus.project.tracks[track.id];
-        if (!liveTrack || draggingIndex < 0) return;
+        if (draggingIndex < 0) return;
+        if (!dragged && Math.hypot(
+          moveEvent.clientX - startClientX,
+          moveEvent.clientY - startClientY,
+        ) < 4) return;
+        dragged = true;
         const moveRect = canvas.getBoundingClientRect();
         const mx = ((moveEvent.clientX - moveRect.left) / moveRect.width) * canvas.width;
-        const my = ((moveEvent.clientY - moveRect.top) / moveRect.height) * canvas.height;
-        const next = [...liveTrack.keyframes];
-        const values = next
-          .map((k) => (typeof k.value === 'number' ? k.value : 0))
-          .filter((v) => Number.isFinite(v));
-        const minVal = values.length ? Math.min(...values) : 0;
-        const maxVal = values.length ? Math.max(...values) : 1;
-        const span = Math.max(maxVal - minVal, 0.001);
         const newTime = Math.max(0, Math.min(duration, ((mx - 8) / (canvas.width - 16)) * duration));
-        const normalizedY = 1 - (my - 8) / (canvas.height - 16);
-        const newValue = minVal + normalizedY * span;
-        next[draggingIndex] = {
-          ...next[draggingIndex],
+        previewKeyframes[draggingIndex] = {
+          ...previewKeyframes[draggingIndex],
           time: newTime,
-          value: newValue,
         };
-        this.commitKeyframes(track.id, next.sort((a, b) => a.time - b.time), false);
-        this.drawTrackCurve(canvas, this.bus.project.tracks[track.id], duration, this.evaluator.sample(performance.now()).time);
+        this.evaluator.seek(newTime);
+        if (scrub) scrub.value = String(Math.round((newTime / Math.max(duration, 0.001)) * 1000));
+        if (time) time.textContent = `${newTime.toFixed(2)}s`;
+        this.drawTrackCurve(
+          canvas,
+          { ...track, keyframes: previewKeyframes },
+          duration,
+          newTime,
+        );
       };
 
       const onUp = () => {
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
+        if (dragged) {
+          this.commitKeyframes(
+            track.id,
+            [...previewKeyframes].sort((a, b) => a.time - b.time),
+          );
+        } else {
+          this.renderTimeline();
+        }
         draggingIndex = -1;
       };
       window.addEventListener('mousemove', onMove);
@@ -6275,15 +6327,14 @@ export class HorizonEditor {
       const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
       const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
       const hitRadius = 8;
+      const curveValues = this.trackCurveValues(track);
+      const minVal = curveValues.length ? Math.min(...curveValues) : 0;
+      const maxVal = curveValues.length ? Math.max(...curveValues) : 1;
+      const span = Math.max(maxVal - minVal, 0.001);
       const index = track.keyframes.findIndex((kf) => {
         const kx = (kf.time / Math.max(duration, 0.001)) * (canvas.width - 16) + 8;
-        const values = track.keyframes
-          .map((k) => (typeof k.value === 'number' ? k.value : 0))
-          .filter((v) => Number.isFinite(v));
-        const minVal = values.length ? Math.min(...values) : 0;
-        const maxVal = values.length ? Math.max(...values) : 1;
-        const span = Math.max(maxVal - minVal, 0.001);
-        const value = typeof kf.value === 'number' ? kf.value : minVal;
+        const keyframeIndex = track.keyframes.indexOf(kf);
+        const value = curveValues[keyframeIndex] ?? minVal;
         const ky = canvas.height - 8 - ((value - minVal) / span) * (canvas.height - 16);
         return Math.hypot(kx - x, ky - y) <= hitRadius;
       });
