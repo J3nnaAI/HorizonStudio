@@ -233,9 +233,9 @@ describe('aggregate public component tools', () => {
     expect(Object.values(ctx.bus.project.nodes).some((node) => node.name === 'Agent Group')).toBe(true);
   });
 
-  it('builds a cross-entity stage through one revision-checked project edit', () => {
+  it('builds a cross-entity stage through one revision-checked project edit', async () => {
     const ctx = makeContext();
-    const edited = editProject(ctx, {
+    const edited = await editProject(ctx, {
       expectedRevision: 0,
       intent: 'Build a complete authored stage',
       operations: [

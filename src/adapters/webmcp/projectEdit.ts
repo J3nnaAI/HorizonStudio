@@ -12,6 +12,8 @@ import type { WebMcpContext } from './tools';
 
 type EditOperation = Record<string, unknown> & { op: string; ref?: string; id?: string };
 
+const MAX_INLINE_ASSET_BYTES = 50 * 1024 * 1024;
+
 const ID_PREFIX: Record<string, string> = {
   createAsset: 'asset',
   createNode: 'node',
@@ -27,6 +29,48 @@ const ID_PREFIX: Record<string, string> = {
 
 function failure(ctx: WebMcpContext, code: string, error: string): ToolResult {
   return { ok: false, code, error, summary: error, revision: ctx.bus.getRevision() };
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('The downloaded asset could not be read'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function embedUrlAssets(operations: EditOperation[]): Promise<EditOperation[]> {
+  const prepared = structuredClone(operations);
+  for (const operation of prepared) {
+    if (operation.op !== 'createAsset') continue;
+    const valueKey = operation.value !== undefined ? 'value' : 'asset';
+    const value = (operation[valueKey] ?? {}) as Record<string, unknown>;
+    const url = typeof value.url === 'string' ? value.url : '';
+    if (!url) continue;
+    const response = await fetch(new URL(url, document.baseURI));
+    if (!response.ok) throw new Error(`Asset download failed (${response.status} ${response.statusText})`);
+    const blob = await response.blob();
+    if (blob.size > MAX_INLINE_ASSET_BYTES) throw new Error('Asset download is larger than 50 MB');
+    const suppliedMimeType = String(value.mimeType ?? '');
+    const responseMimeType = blob.type.split(';', 1)[0];
+    const mimeType = responseMimeType || suppliedMimeType || 'application/octet-stream';
+    if (suppliedMimeType.startsWith('image/') && !mimeType.startsWith('image/')) {
+      throw new Error(`Asset URL did not return an image (received ${mimeType})`);
+    }
+    value.mimeType = mimeType;
+    value.size = blob.size;
+    value.dataUrl = await blobToDataUrl(blob);
+    value.storage = 'inline';
+    value.source = String(value.source ?? 'webmcp-url-import');
+    value.metadata = {
+      ...((value.metadata as Record<string, unknown> | undefined) ?? {}),
+      sourceUrl: url,
+    };
+    delete value.url;
+    operation[valueKey] = value;
+  }
+  return prepared;
 }
 
 function resolveRefs(value: unknown, refs: Map<string, string>): unknown {
@@ -281,10 +325,10 @@ function validateReferences(project: HorizonProject): void {
   }
 }
 
-export function editProject(
+export async function editProject(
   ctx: WebMcpContext,
   input: { expectedRevision?: number; intent?: string; operations?: EditOperation[] },
-): ToolResult {
+): Promise<ToolResult> {
   if (input.expectedRevision === undefined) return failure(ctx, 'REVISION_REQUIRED', 'expectedRevision is required');
   if (input.expectedRevision !== ctx.bus.getRevision()) {
     return failure(ctx, 'STALE_REVISION', `Expected revision ${input.expectedRevision}, current revision is ${ctx.bus.getRevision()}`);
@@ -332,6 +376,16 @@ export function editProject(
     }
   }
 
+  let operations: EditOperation[];
+  try {
+    operations = await embedUrlAssets(input.operations);
+  } catch (error) {
+    return failure(ctx, 'ASSET_IMPORT_FAILED', error instanceof Error ? error.message : String(error));
+  }
+  if (input.expectedRevision !== ctx.bus.getRevision()) {
+    return failure(ctx, 'STALE_REVISION', `The project changed while assets were importing; current revision is ${ctx.bus.getRevision()}`);
+  }
+
   const draft = structuredClone(ctx.bus.project);
   const refs = new Map<string, string>();
   const ids = new Map<EditOperation, string>();
@@ -341,11 +395,11 @@ export function editProject(
     ...Object.keys(draft.tracks), ...Object.keys(draft.behaviors), ...Object.keys(draft.variants),
   ]);
   try {
-    for (const operation of input.operations) {
+    for (const operation of operations) {
       if (!operation || typeof operation !== 'object' || !operation.op) throw new Error('Every edit requires an op');
       if (ID_PREFIX[operation.op]) ids.set(operation, uniqueId(operation, refs, reserved));
     }
-    for (const operation of input.operations) applyOperation(draft, operation, refs, ids);
+    for (const operation of operations) applyOperation(draft, operation, refs, ids);
     if (!draft.compositions[draft.activeCompositionId]) throw new Error('activeCompositionId must reference an existing composition');
     validateReferences(draft);
     const validated = deserializeProject(serializeProject(draft)).project;
@@ -361,11 +415,11 @@ export function editProject(
     if (!outcome.ok) return failure(ctx, 'COMMAND_FAILED', outcome.error);
     return {
       ok: true,
-      summary: `Applied ${input.operations.length} project edits as one undoable transaction`,
+      summary: `Applied ${operations.length} project edits as one undoable transaction`,
       transactionId: outcome.transactionId,
       changed: outcome.changed,
       revision: ctx.bus.getRevision(),
-      data: { refs: Object.fromEntries(refs), operationCount: input.operations.length },
+      data: { refs: Object.fromEntries(refs), operationCount: operations.length },
     };
   } catch (error) {
     return failure(ctx, 'VALIDATION_FAILED', error instanceof Error ? error.message : String(error));

@@ -17,6 +17,7 @@ import gltfLoaderSource from '../../node_modules/three/examples/jsm/loaders/GLTF
 import bufferGeometryUtilsSource from '../../node_modules/three/examples/jsm/utils/BufferGeometryUtils.js?raw';
 import fontLoaderSource from '../../node_modules/three/examples/jsm/loaders/FontLoader.js?raw';
 import textGeometrySource from '../../node_modules/three/examples/jsm/geometries/TextGeometry.js?raw';
+import skySource from '../../node_modules/three/examples/jsm/objects/Sky.js?raw';
 import helvetikerBoldFont from '../../node_modules/three/examples/fonts/helvetiker_bold.typeface.json?raw';
 import apacheLicenseText from '../../LICENSE?raw';
 
@@ -1151,6 +1152,7 @@ export async function publishStaticPackage(
     'vendor/loaders/GLTFLoader.js': normalizeVendorImports(gltfLoaderSource),
     'vendor/loaders/FontLoader.js': normalizeVendorImports(fontLoaderSource),
     'vendor/geometries/TextGeometry.js': normalizeVendorImports(textGeometrySource),
+    'vendor/objects/Sky.js': normalizeVendorImports(skySource),
     'vendor/fonts/helvetiker_bold.typeface.json': helvetikerBoldFont,
     'vendor/three.module.min.js': threeModuleSource,
     'vendor/utils/BufferGeometryUtils.js': normalizeVendorImports(bufferGeometryUtilsSource),

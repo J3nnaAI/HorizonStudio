@@ -270,7 +270,7 @@ async function main() {
       return {
         delete: true,
         import: true,
-        remoteImport: false,
+        remoteImport: true,
         save: true,
         export: true,
         publish: true,

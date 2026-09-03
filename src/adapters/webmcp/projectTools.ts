@@ -7,12 +7,14 @@ import type { ToolResult } from '../../core/types';
 import type { WebMcpContext, WebMcpPermissions } from './tools';
 import { WEBMCP_TOOL_VERSION } from './semanticTools';
 import { editProject } from './projectEdit';
+import { createImageShader, IMAGE_SHADER_ID } from '../../shaders/image';
 
 export const PUBLIC_PROJECT_TOOL_NAMES = [
   'newProject',
   'listProjects',
   'openProject',
   'editProject',
+  'placeImage',
   'importProject',
   'saveProject',
   'exportProject',
@@ -23,6 +25,23 @@ export const PUBLIC_PROJECT_TOOL_NAMES = [
 export type PublicProjectToolName = typeof PUBLIC_PROJECT_TOOL_NAMES[number];
 
 type RevisionInput = { expectedRevision?: number };
+
+type PlaceImageInput = RevisionInput & {
+  dataUrl?: string;
+  url?: string;
+  name?: string;
+  target?: 'stage' | 'environment';
+  compositionId?: string;
+  parentId?: string;
+  position?: [number, number, number];
+  rotation?: [number, number, number];
+  width?: number;
+  height?: number;
+  opacity?: number;
+  intent?: string;
+};
+
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 
 function policy(ctx: WebMcpContext): Required<WebMcpPermissions> {
   return {
@@ -59,6 +78,176 @@ function stale(ctx: WebMcpContext, input: RevisionInput): ToolResult | null {
     return fail(ctx, 'STALE_REVISION', `Expected revision ${input.expectedRevision}, current revision is ${ctx.bus.getRevision()}`);
   }
   return null;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('The image could not be read'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function imageDimensions(blob: Blob): Promise<{ width: number; height: number }> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(blob);
+      const dimensions = { width: bitmap.width, height: bitmap.height };
+      bitmap.close();
+      return dimensions;
+    } catch {
+      // SVG and less common browser image formats can still decode through Image.
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return { width: image.naturalWidth, height: image.naturalHeight };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Import an image and make it visible without requiring callers to know Horizon's asset/material/node graph. */
+export async function placeImage(ctx: WebMcpContext, input: PlaceImageInput): Promise<ToolResult> {
+  const revisionFailure = stale(ctx, input);
+  if (revisionFailure) return revisionFailure;
+  if (!policy(ctx).import) return fail(ctx, 'PERMISSION_DENIED', 'Image import is disabled');
+  if (Boolean(input.dataUrl) === Boolean(input.url)) {
+    return fail(ctx, 'INVALID_INPUT', 'Provide exactly one image source: dataUrl or url');
+  }
+
+  try {
+    const sourceUrl = input.url ? new URL(input.url, document.baseURI) : null;
+    if (sourceUrl && !['http:', 'https:'].includes(sourceUrl.protocol)) {
+      return fail(ctx, 'INVALID_INPUT', 'Image URL must use HTTP or HTTPS');
+    }
+    if (sourceUrl && sourceUrl.origin !== location.origin && !policy(ctx).remoteImport) {
+      return fail(ctx, 'PERMISSION_DENIED', 'Remote image import is disabled');
+    }
+    const response = await fetch(sourceUrl?.href ?? input.dataUrl!);
+    if (!response.ok) throw new Error(`Image download failed (${response.status} ${response.statusText})`);
+    const blob = await response.blob();
+    if (blob.size > MAX_IMAGE_BYTES) throw new Error('The image is larger than 50 MB');
+    const mimeType = blob.type.split(';', 1)[0];
+    if (!mimeType.startsWith('image/')) throw new Error(`The source is not an image (${mimeType || 'unknown type'})`);
+    const dimensions = await imageDimensions(blob);
+    if (!dimensions.width || !dimensions.height) throw new Error('The image dimensions could not be read');
+    const dataUrl = await blobToDataUrl(blob);
+    const target = input.target ?? 'stage';
+    const compositionId = input.compositionId ?? ctx.bus.project.activeCompositionId;
+    const composition = ctx.bus.project.compositions[compositionId];
+    if (!composition) return fail(ctx, 'NOT_FOUND', `Composition not found: ${compositionId}`);
+    const name = input.name?.trim() || 'Imported Image';
+    const assetValue = {
+      name,
+      kind: 'image',
+      mimeType,
+      storage: 'inline',
+      importedAt: new Date().toISOString(),
+      dataUrl,
+      size: blob.size,
+      width: dimensions.width,
+      height: dimensions.height,
+      source: 'webmcp-image-import',
+      metadata: sourceUrl ? { sourceUrl: sourceUrl.href } : {},
+    };
+
+    const operations: Array<Record<string, unknown> & { op: string }> = [];
+    if (!ctx.bus.project.shaders[IMAGE_SHADER_ID]) {
+      operations.push({ op: 'createShader', id: IMAGE_SHADER_ID, value: createImageShader() });
+    }
+    operations.push({ op: 'createAsset', ref: 'imageAsset', value: assetValue });
+
+    if (target === 'environment') {
+      operations.push({
+        op: 'patchEntity',
+        collection: 'compositions',
+        entityId: compositionId,
+        patch: {
+          environment: {
+            ...structuredClone(composition.environment),
+            background: {
+              ...structuredClone(composition.environment.background),
+              mode: 'image',
+              visible: true,
+              imageAssetId: '@imageAsset',
+            },
+          },
+        },
+      });
+    } else {
+      const aspect = dimensions.width / dimensions.height;
+      const suggested = ctx.scene.getPastePlaneTransform(aspect);
+      let width = input.width ?? suggested.width;
+      let height = input.height ?? suggested.height;
+      if (input.width !== undefined && input.height === undefined) height = input.width / aspect;
+      if (input.height !== undefined && input.width === undefined) width = input.height * aspect;
+      if (!(width > 0) || !(height > 0)) throw new Error('Image width and height must be greater than zero');
+      operations.push(
+        {
+          op: 'createMaterial',
+          ref: 'imageMaterial',
+          value: {
+            name: `${name} Material`,
+            shaderId: IMAGE_SHADER_ID,
+            parameters: {
+              assetId: '@imageAsset',
+              opacity: Math.max(0, Math.min(1, input.opacity ?? 1)),
+              roughness: 0.78,
+              doubleSided: true,
+            },
+          },
+        },
+        {
+          op: 'createNode',
+          ref: 'imageNode',
+          value: {
+            type: 'mesh',
+            name,
+            compositionId,
+            parentId: input.parentId,
+            properties: {
+              'mesh.primitive': 'plane',
+              'mesh.width': width,
+              'mesh.height': height,
+              'transform.position': input.position ?? suggested.position,
+              'transform.rotation': input.rotation ?? suggested.rotation,
+            },
+            components: { materialId: '@imageMaterial' },
+            tags: ['webmcp-image', '2d-plane'],
+          },
+        },
+      );
+    }
+
+    const edited = await editProject(ctx, {
+      expectedRevision: input.expectedRevision,
+      intent: input.intent ?? `Place image: ${name}`,
+      operations,
+    });
+    if (!edited.ok) return edited;
+    const refs = (edited.data as { refs?: Record<string, string> } | undefined)?.refs ?? {};
+    if (target === 'stage' && refs.imageNode) ctx.setSelection([refs.imageNode]);
+    return {
+      ...edited,
+      summary: target === 'environment'
+        ? `Placed ${name} in the environment`
+        : `Placed ${name} on the stage`,
+      data: {
+        ...(edited.data as Record<string, unknown> | undefined),
+        target,
+        assetId: refs.imageAsset,
+        nodeId: refs.imageNode,
+        dimensions,
+      },
+    };
+  } catch (error) {
+    return fail(ctx, 'IMAGE_IMPORT_FAILED', error instanceof Error ? error.message : String(error));
+  }
 }
 
 async function call(
@@ -188,6 +377,7 @@ export async function executePublicProjectTool(
     case 'listProjects': return listProjects(ctx);
     case 'openProject': return openProject(ctx, input as never);
     case 'editProject': return editProject(ctx, input as never);
+    case 'placeImage': return placeImage(ctx, input as never);
     case 'importProject': return importProject(ctx, input as never);
     case 'saveProject': return saveProject(ctx, input as never);
     case 'exportProject': return exportProject(ctx, input as never);

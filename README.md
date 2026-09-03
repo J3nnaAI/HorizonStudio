@@ -57,11 +57,11 @@ Anything that changes over time can be animated on the timeline. That includes o
 
 ## Working through WebMCP
 
-Open Horizon in a WebMCP-enabled browser or in ChatGPT’s in-app browser. When the connection succeeds, the header shows `WebMCP 17 tools` and Horizon opens in its quieter Focus workspace by default.
+Open Horizon in a WebMCP-enabled browser or in ChatGPT’s in-app browser. When the connection succeeds, the header shows `WebMCP 18 tools` and Horizon opens in its quieter Focus workspace by default.
 
 The AI can then discover what is in the project, inspect the available controls, make a revision-checked change, and show you the result. It can also create, open, save, import, export, preview, and publish projects on your behalf. You should not need to clone the repository or edit Horizon’s source to author a project.
 
-Horizon exposes seventeen public tools:
+Horizon exposes eighteen public tools:
 
 | Tool | What it lets the AI do |
 |---|---|
@@ -70,6 +70,7 @@ Horizon exposes seventeen public tools:
 | `listProjects` | See the projects stored by this browser. |
 | `openProject` | Open a saved project or template. |
 | `editProject` | Build or revise several related parts of a project in one undoable change. |
+| `placeImage` | Import a picture, keep it with the project, and place it on the stage or in the environment. |
 | `importProject` | Bring in a portable `.hzn` project from supplied data or an allowed URL. |
 | `saveProject` | Save the current project to browser storage. |
 | `exportProject` | Download the current project as a portable `.hzn` file. |

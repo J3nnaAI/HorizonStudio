@@ -7,6 +7,7 @@ import * as THREE from './vendor/three.module.min.js';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { FontLoader } from './vendor/loaders/FontLoader.js';
 import { TextGeometry } from './vendor/geometries/TextGeometry.js';
+import { Sky } from './vendor/objects/Sky.js';
 
 const SUPPORTED_PACKAGE_VERSION = 1;
 const SUPPORTED_SCHEMA_VERSION = '2.0';
@@ -180,6 +181,20 @@ class RuntimeInstance {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.canvasHost.append(this.renderer.domElement);
     this.scene = new THREE.Scene();
+    this.backgroundLoadToken = 0;
+    this.backgroundTexture = null;
+    this.physicalSkySun = new THREE.Vector3();
+    this.physicalSky = new Sky();
+    this.physicalSky.name = 'Horizon Physical Sky';
+    this.physicalSky.scale.setScalar(450000);
+    this.physicalSky.visible = false;
+    this.physicalSky.frustumCulled = false;
+    this.physicalSky.material.depthWrite = false;
+    this.physicalSkyLight = new THREE.DirectionalLight(0xffffff, 0);
+    this.physicalSkyLight.visible = false;
+    this.physicalSkyFill = new THREE.HemisphereLight(0xaed8ff, 0x30261e, 0);
+    this.physicalSkyFill.visible = false;
+    this.scene.add(this.physicalSky, this.physicalSkyLight, this.physicalSkyFill);
     this.camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.1, 1000);
     this.camera.position.set(0, 1, 6);
     this.loader = new GLTFLoader();
@@ -505,7 +520,88 @@ class RuntimeInstance {
   applyEnvironment(composition) {
     const background = composition.environment?.background;
     const color = typeof background === 'string' ? background : background?.color ?? '#050505';
-    this.scene.background = background?.mode === 'transparent' ? null : new THREE.Color(color);
+    const mode = typeof background === 'object' ? background?.mode ?? 'color' : 'color';
+    const visible = typeof background !== 'object' || background?.visible !== false;
+    const opacity = Math.max(0, Math.min(1, Number(background?.opacity ?? 1)));
+    this.renderer.setClearColor(color, mode === 'transparent' ? 0 : opacity);
+    this.backgroundLoadToken += 1;
+    this.backgroundTexture?.dispose();
+    this.backgroundTexture = null;
+
+    const sky = composition.environment?.sky ?? {};
+    const skyActive = visible && (
+      mode === 'sky' ||
+      (sky.enabled === true && mode !== 'image' && mode !== 'transparent')
+    );
+    this.physicalSky.visible = skyActive;
+    this.physicalSkyLight.visible = skyActive;
+    this.physicalSkyFill.visible = skyActive;
+    if (skyActive) {
+      const uniforms = this.physicalSky.material.uniforms;
+      uniforms.turbidity.value = THREE.MathUtils.clamp(Number(sky.turbidity ?? 2), 0, 20);
+      uniforms.rayleigh.value = THREE.MathUtils.clamp(Number(sky.rayleigh ?? 1), 0, 4);
+      uniforms.mieCoefficient.value = THREE.MathUtils.clamp(Number(sky.mieCoefficient ?? 0.005), 0, 0.1);
+      uniforms.mieDirectionalG.value = THREE.MathUtils.clamp(Number(sky.mieDirectionalG ?? 0.8), 0, 0.999);
+      const elevation = THREE.MathUtils.clamp(Number(sky.sunElevation ?? 25), -10, 90);
+      const phi = THREE.MathUtils.degToRad(90 - elevation);
+      const theta = THREE.MathUtils.degToRad(Number(sky.sunAzimuth ?? 180));
+      this.physicalSkySun.setFromSphericalCoords(1, phi, theta);
+      uniforms.sunPosition.value.copy(this.physicalSkySun);
+      const sunIntensity = Math.max(Number(sky.sunIntensity ?? 1), 0);
+      this.physicalSkyLight.intensity = sunIntensity;
+      this.physicalSkyLight.position.copy(this.physicalSkySun).multiplyScalar(100);
+      this.physicalSkyFill.groundColor.set(sky.groundColor ?? '#30261e');
+      this.physicalSkyFill.color.setHSL(0.58, 0.45, THREE.MathUtils.clamp(0.42 + elevation / 300, 0.32, 0.72));
+      this.physicalSkyFill.intensity = Math.min(1.5, 0.12 + sunIntensity * 0.18);
+    }
+
+    this.scene.background = visible && mode === 'color' ? new THREE.Color(color) : null;
+    if (visible && mode === 'image' && background.imageAssetId) {
+      const token = this.backgroundLoadToken;
+      const assetId = background.imageAssetId;
+      const asset = this.project.assets[assetId];
+      const published = this.manifest.assets[assetId];
+      if (asset && published) {
+        new THREE.TextureLoader().load(
+          this.assetUrl(assetId),
+          (texture) => {
+            if (token !== this.backgroundLoadToken) {
+              texture.dispose();
+              return;
+            }
+            texture.colorSpace = asset.colorSpace === 'linear'
+              ? THREE.LinearSRGBColorSpace
+              : THREE.SRGBColorSpace;
+            if (
+              asset.kind === 'hdri' ||
+              asset.metadata?.projection === 'equirectangular'
+            ) texture.mapping = THREE.EquirectangularReflectionMapping;
+            texture.needsUpdate = true;
+            this.backgroundTexture = texture;
+            this.scene.background = texture;
+            this.scene.backgroundIntensity = Math.max(Number(background.intensity ?? 1), 0);
+            this.scene.backgroundBlurriness = THREE.MathUtils.clamp(Number(background.blur ?? 0), 0, 1);
+            this.scene.backgroundRotation.set(0, Number(background.rotation ?? 0), 0);
+            this.render();
+          },
+          undefined,
+          (error) => this.emitInternal('error', {
+            code: 'environment-image-load',
+            assetId,
+            message: String(error),
+          }),
+        );
+      } else {
+        this.emitInternal('error', {
+          code: 'environment-image-missing',
+          assetId,
+          message: `Environment image is not published: ${assetId}`,
+        });
+      }
+    }
+    this.scene.backgroundIntensity = Math.max(Number(background?.intensity ?? 1), 0);
+    this.scene.backgroundBlurriness = THREE.MathUtils.clamp(Number(background?.blur ?? 0), 0, 1);
+    this.scene.backgroundRotation.set(0, Number(background?.rotation ?? 0), 0);
     const fog = composition.environment?.fog;
     this.scene.fog = fog?.enabled === false ? null :
       fog?.mode === 'linear' ? new THREE.Fog(fog.color ?? color, fog.near ?? 1, fog.far ?? 100) :
@@ -1023,6 +1119,10 @@ class RuntimeInstance {
     this.container.removeEventListener('click', this.presentationClickHandler);
     clearInterval(this.presentationTimer);
     this.clearScene();
+    this.backgroundLoadToken += 1;
+    this.backgroundTexture?.dispose();
+    this.physicalSky?.geometry.dispose();
+    this.physicalSky?.material.dispose();
     this.renderer?.dispose();
     this.listeners.clear();
     this.container.replaceChildren();

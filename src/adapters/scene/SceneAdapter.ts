@@ -18,6 +18,7 @@ import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { SSRPass } from 'three/examples/jsm/postprocessing/SSRPass.js';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import type { EvalSnapshot } from '../../core/evaluator';
@@ -158,6 +159,12 @@ export class SceneAdapter {
   private inputElement: HTMLElement;
   private backgroundTexture: THREE.Texture | null = null;
   private backgroundAssetId = '';
+  private backgroundAssetRevision = '';
+  private backgroundLoadToken = 0;
+  private readonly physicalSky: Sky;
+  private readonly physicalSkySun = new THREE.Vector3();
+  private readonly physicalSkyLight: THREE.DirectionalLight;
+  private readonly physicalSkyFill: THREE.HemisphereLight;
   private graphiteGrain: THREE.CanvasTexture;
   private floorGrain: THREE.CanvasTexture;
   private materialPreviewRenderer: THREE.WebGLRenderer | null = null;
@@ -227,6 +234,21 @@ export class SceneAdapter {
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.035).texture;
     pmrem.dispose();
+
+    this.physicalSky = new Sky();
+    this.physicalSky.name = 'Horizon Physical Sky';
+    this.physicalSky.scale.setScalar(450_000);
+    this.physicalSky.visible = false;
+    this.physicalSky.frustumCulled = false;
+    this.physicalSky.material.depthWrite = false;
+    this.physicalSky.material.userData.excludeFromBloom = true;
+    this.physicalSkyLight = new THREE.DirectionalLight(0xffffff, 0);
+    this.physicalSkyLight.name = 'Horizon Sky Sun';
+    this.physicalSkyLight.visible = false;
+    this.physicalSkyFill = new THREE.HemisphereLight(0xaed8ff, 0x30261e, 0);
+    this.physicalSkyFill.name = 'Horizon Sky Fill';
+    this.physicalSkyFill.visible = false;
+    this.scene.add(this.physicalSky, this.physicalSkyLight, this.physicalSkyFill);
 
     this.graphiteGrain = this.createGrainTexture(256, 4.5, 0.32);
     this.floorGrain = this.createGrainTexture(512, 0.08, 0.08);
@@ -996,6 +1018,7 @@ export class SceneAdapter {
         ? (environment.background as Record<string, unknown>)
         : {};
     const fog = (environment.fog as Record<string, unknown> | undefined) ?? {};
+    const sky = (environment.sky as Record<string, unknown> | undefined) ?? {};
     const atmosphere =
       (environment.atmosphere as Record<string, unknown> | undefined) ?? {};
 
@@ -1013,27 +1036,52 @@ export class SceneAdapter {
     );
 
     const backgroundAssetId = (background.imageAssetId as string) ?? '';
-    if (backgroundAssetId !== this.backgroundAssetId) {
-      this.backgroundTexture?.dispose();
-      this.backgroundTexture = null;
-      this.backgroundAssetId = backgroundAssetId;
-      const asset = project.assets[backgroundAssetId] as
-        | { dataUrl?: string; mimeType?: string }
-        | undefined;
-      if (asset?.dataUrl && asset.mimeType?.startsWith('image/')) {
-        new THREE.TextureLoader().load(asset.dataUrl, (texture) => {
-          if (this.backgroundAssetId !== backgroundAssetId) {
-            texture.dispose();
-            return;
-          }
-          texture.colorSpace = THREE.SRGBColorSpace;
-          texture.needsUpdate = true;
-          this.backgroundTexture = texture;
-          this.scene.background = texture;
-        });
-      }
+    this.loadEnvironmentBackground(project, backgroundAssetId);
+
+    // `background.mode = sky` is the primary switch. `sky.enabled` also activates
+    // it for legacy projects that predate the explicit background mode.
+    const skyActive = backgroundVisible && (
+      backgroundMode === 'sky' ||
+      (sky.enabled === true && backgroundMode !== 'image' && backgroundMode !== 'transparent')
+    );
+    this.physicalSky.visible = skyActive;
+    this.physicalSkyLight.visible = skyActive;
+    this.physicalSkyFill.visible = skyActive;
+    if (skyActive) {
+      const uniforms = this.physicalSky.material.uniforms;
+      uniforms.turbidity.value = THREE.MathUtils.clamp(Number(sky.turbidity ?? 2), 0, 20);
+      uniforms.rayleigh.value = THREE.MathUtils.clamp(Number(sky.rayleigh ?? 1), 0, 4);
+      uniforms.mieCoefficient.value = THREE.MathUtils.clamp(
+        Number(sky.mieCoefficient ?? 0.005),
+        0,
+        0.1,
+      );
+      uniforms.mieDirectionalG.value = THREE.MathUtils.clamp(
+        Number(sky.mieDirectionalG ?? 0.8),
+        0,
+        0.999,
+      );
+      const elevation = THREE.MathUtils.clamp(Number(sky.sunElevation ?? 25), -10, 90);
+      const azimuth = Number(sky.sunAzimuth ?? 180);
+      const phi = THREE.MathUtils.degToRad(90 - elevation);
+      const theta = THREE.MathUtils.degToRad(azimuth);
+      this.physicalSkySun.setFromSphericalCoords(1, phi, theta);
+      uniforms.sunPosition.value.copy(this.physicalSkySun);
+      const sunIntensity = Math.max(Number(sky.sunIntensity ?? 1), 0);
+      this.physicalSkyLight.intensity = sunIntensity;
+      this.physicalSkyLight.position.copy(this.physicalSkySun).multiplyScalar(100);
+      const groundColor = new THREE.Color(String(sky.groundColor ?? '#30261e'));
+      this.physicalSkyFill.groundColor.copy(groundColor);
+      this.physicalSkyFill.intensity = Math.min(1.5, 0.12 + sunIntensity * 0.18);
+      this.physicalSkyFill.color.setHSL(
+        0.58,
+        0.45,
+        THREE.MathUtils.clamp(0.42 + elevation / 300, 0.32, 0.72),
+      );
     }
-    this.scene.background = backgroundVisible ? this.backgroundTexture : null;
+
+    this.scene.background =
+      backgroundVisible && backgroundMode === 'image' ? this.backgroundTexture : null;
     this.scene.backgroundIntensity = Math.max((background.intensity as number) ?? 1, 0);
     this.scene.backgroundBlurriness = THREE.MathUtils.clamp(
       (background.blur as number) ?? 0,
@@ -1097,6 +1145,79 @@ export class SceneAdapter {
       0,
       2,
     );
+  }
+
+  private loadEnvironmentBackground(project: HorizonProject, assetId: string): void {
+    const candidate = assetId ? project.assets[assetId] : undefined;
+    const asset = candidate &&
+      typeof candidate.id === 'string' &&
+      typeof candidate.name === 'string' &&
+      typeof candidate.kind === 'string' &&
+      typeof candidate.mimeType === 'string' &&
+      typeof candidate.storage === 'string' &&
+      typeof candidate.importedAt === 'string'
+      ? candidate as AssetRecord
+      : undefined;
+    const revision = asset
+      ? [asset.id, asset.hash, asset.importedAt, asset.storage, asset.blobKey, asset.url, asset.dataUrl?.length]
+          .filter((value) => value !== undefined)
+          .join(':')
+      : '';
+    if (assetId === this.backgroundAssetId && revision === this.backgroundAssetRevision) return;
+
+    const loadToken = ++this.backgroundLoadToken;
+    this.backgroundAssetId = assetId;
+    this.backgroundAssetRevision = revision;
+    this.backgroundTexture?.dispose();
+    this.backgroundTexture = null;
+    this.container.dataset.environmentStatus = assetId ? 'loading' : 'ready';
+    if (!assetId) return;
+    if (!asset || (!asset.mimeType.startsWith('image/') && asset.kind !== 'hdri')) {
+      this.container.dataset.environmentStatus = 'error';
+      console.warn(`[Horizon] Environment image asset is missing or unsupported: ${assetId}`);
+      return;
+    }
+
+    void (async () => {
+      let url: string | null = null;
+      try {
+        url = await resolveAssetUrl(asset);
+        if (!url) throw new Error('The asset has no readable image data');
+        const texture = await new THREE.TextureLoader().loadAsync(url);
+        if (loadToken !== this.backgroundLoadToken || this.backgroundAssetId !== assetId) {
+          texture.dispose();
+          return;
+        }
+        texture.colorSpace = asset.colorSpace === 'linear'
+          ? THREE.LinearSRGBColorSpace
+          : THREE.SRGBColorSpace;
+        if (
+          asset.kind === 'hdri' ||
+          asset.metadata?.projection === 'equirectangular'
+        ) {
+          texture.mapping = THREE.EquirectangularReflectionMapping;
+        }
+        texture.needsUpdate = true;
+        this.backgroundTexture = texture;
+        this.container.dataset.environmentStatus = 'ready';
+        const activeBackground = getActiveComposition(this.currentProject ?? project)?.environment.background;
+        if (
+          typeof activeBackground === 'object' &&
+          activeBackground?.visible !== false &&
+          activeBackground?.mode === 'image' &&
+          activeBackground?.imageAssetId === assetId
+        ) {
+          this.scene.background = texture;
+          this.renderScene();
+        }
+      } catch (error) {
+        if (loadToken !== this.backgroundLoadToken) return;
+        this.container.dataset.environmentStatus = 'error';
+        console.warn(`[Horizon] Environment image failed to load: ${asset.name}`, error);
+      } finally {
+        if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+      }
+    })();
   }
 
   private applyProjectCamera(project: HorizonProject, snapshot?: EvalSnapshot) {
@@ -3176,7 +3297,10 @@ outgoingLight += uSubsurfaceColor * hzScatter * uSubsurfaceStrength * hzIllumina
     this.imageTextureLoads.clear();
     this.gltfAssets.dispose();
     this.currentProject = null;
+    this.backgroundLoadToken += 1;
     this.backgroundTexture?.dispose();
+    this.physicalSky.geometry.dispose();
+    this.physicalSky.material.dispose();
     this.bloomBlackMaterial.dispose();
     this.graphiteGrain.dispose();
     this.floorGrain.dispose();

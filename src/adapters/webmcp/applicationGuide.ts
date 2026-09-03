@@ -66,6 +66,7 @@ export function buildApplicationGuide(ctx: WebMcpContext): Record<string, unknow
     capabilities: [
       'Inspect and edit project, composition, scene, node, material, shader, field, timeline, interaction, presentation, responsive, runtime-contract, and render state.',
       'Create, list, open, import, save, export, publish, and preview projects through explicit project tools backed entirely by browser storage and downloads.',
+      'Import image assets from inline data or an allowed URL. URL assets are downloaded and embedded so projects remain portable when exported or published.',
       'Create supported entities through factory components such as factory/node, factory/material, factory/sequence, and factory/render-job.',
       'Invoke higher-level authoring operations through action components such as action/object-transform and action/preview-render.',
       'Select scene components and inspect every editable value with its type, range, help, and validation rules.',
@@ -117,6 +118,12 @@ export function buildApplicationGuide(ctx: WebMcpContext): Record<string, unknow
       addBehavior: '{ op, ref?, id?, value:{ name, trigger, actions, enabled? } }',
       setProperty: '{ op, ownerId, path, value }',
     },
+    environmentRecipes: {
+      physicalSky:
+        'Patch the active composition environment so background.mode is sky and sky.enabled is true. Sky controls include turbidity, rayleigh, mieCoefficient, mieDirectionalG, sunElevation, sunAzimuth, sunIntensity, and groundColor.',
+      imageSky:
+        'In one editProject call, createAsset with ref skyImage and an image dataUrl or URL, then patch the active composition environment with background.mode image and background.imageAssetId @skyImage. Preserve the other environment sections in the patch.',
+    },
     tools: {
       about: {
         purpose: 'Explain Horizon Studio, report current capabilities, and show how to use every public tool.',
@@ -151,6 +158,21 @@ export function buildApplicationGuide(ctx: WebMcpContext): Record<string, unknow
           intent: 'plain-language description recorded in shared history',
         },
         result: 'One transaction ID, the new revision, and a map from client references to created entity IDs.',
+      },
+      placeImage: {
+        purpose: 'Import a picture and immediately place it on the stage or use it as the environment.',
+        readOnly: false,
+        input: {
+          dataUrl: 'inline image data URL; provide this or url',
+          url: 'allowed image URL; provide this or dataUrl',
+          target: 'stage (default) or environment',
+          position: 'optional [x,y,z] for stage placement',
+          rotation: 'optional [x,y,z] radians for stage placement',
+          width: 'optional stage width; height follows the source aspect ratio when omitted',
+          height: 'optional stage height; width follows the source aspect ratio when omitted',
+          expectedRevision: 'required current revision',
+        },
+        result: 'The embedded asset ID, optional stage node ID, source dimensions, transaction ID, and new revision.',
       },
       importProject: {
         purpose: 'Import and open a portable .hzn package without repository access.',
