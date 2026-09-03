@@ -6191,16 +6191,19 @@ export class HorizonEditor {
     ctx.stroke();
   }
 
-  /** Plot the numeric or vector component that carries the most visible motion. */
-  private trackCurveValues(track: Track): number[] {
+  /** Plot and edit the numeric or vector component that carries the most visible motion. */
+  private trackCurveProjection(track: Track): { values: number[]; vectorComponent: number | null } {
     const vectorLength = track.keyframes.reduce(
       (length, keyframe) => Math.max(length, Array.isArray(keyframe.value) ? keyframe.value.length : 0),
       0,
     );
     if (vectorLength === 0) {
-      return track.keyframes.map((keyframe) =>
-        typeof keyframe.value === 'number' && Number.isFinite(keyframe.value) ? keyframe.value : 0,
-      );
+      return {
+        values: track.keyframes.map((keyframe) =>
+          typeof keyframe.value === 'number' && Number.isFinite(keyframe.value) ? keyframe.value : 0,
+        ),
+        vectorComponent: null,
+      };
     }
     let bestComponent = 0;
     let bestRange = -1;
@@ -6216,11 +6219,18 @@ export class HorizonEditor {
         bestComponent = component;
       }
     }
-    return track.keyframes.map((keyframe) => {
-      if (!Array.isArray(keyframe.value)) return 0;
-      const value = Number(keyframe.value[bestComponent] ?? 0);
-      return Number.isFinite(value) ? value : 0;
-    });
+    return {
+      values: track.keyframes.map((keyframe) => {
+        if (!Array.isArray(keyframe.value)) return 0;
+        const value = Number(keyframe.value[bestComponent] ?? 0);
+        return Number.isFinite(value) ? value : 0;
+      }),
+      vectorComponent: bestComponent,
+    };
+  }
+
+  private trackCurveValues(track: Track): number[] {
+    return this.trackCurveProjection(track).values;
   }
 
   private bindTrackCurve(canvas: HTMLCanvasElement, track: Track, duration: number) {
@@ -6252,7 +6262,8 @@ export class HorizonEditor {
       const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
       const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
       const hitRadius = 8;
-      const curveValues = this.trackCurveValues(track);
+      const projection = this.trackCurveProjection(track);
+      const curveValues = projection.values;
       const minVal = curveValues.length ? Math.min(...curveValues) : 0;
       const maxVal = curveValues.length ? Math.max(...curveValues) : 1;
       const span = Math.max(maxVal - minVal, 0.001);
@@ -6287,10 +6298,22 @@ export class HorizonEditor {
         dragged = true;
         const moveRect = canvas.getBoundingClientRect();
         const mx = ((moveEvent.clientX - moveRect.left) / moveRect.width) * canvas.width;
+        const my = ((moveEvent.clientY - moveRect.top) / moveRect.height) * canvas.height;
         const newTime = Math.max(0, Math.min(duration, ((mx - 8) / (canvas.width - 16)) * duration));
+        const normalizedY = Math.max(0, Math.min(1, 1 - (my - 8) / (canvas.height - 16)));
+        const newValue = minVal + normalizedY * span;
+        const previousValue = previewKeyframes[draggingIndex].value;
+        const nextValue = projection.vectorComponent === null
+          ? newValue
+          : (() => {
+              const vector = Array.isArray(previousValue) ? [...previousValue] : [];
+              vector[projection.vectorComponent] = newValue;
+              return vector;
+            })();
         previewKeyframes[draggingIndex] = {
           ...previewKeyframes[draggingIndex],
           time: newTime,
+          value: nextValue,
         };
         this.evaluator.seek(newTime);
         if (scrub) scrub.value = String(Math.round((newTime / Math.max(duration, 0.001)) * 1000));
